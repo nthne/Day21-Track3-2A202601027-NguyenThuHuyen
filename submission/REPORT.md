@@ -72,7 +72,7 @@ Trả lời ba câu (mỗi câu ≥3 câu văn):
 thắng, thua, hay hoà? Thứ tự đó có giống thứ tự theo train loss không? Điều đó nói gì về
 *rank* so với *vị trí gắn adapter*?**
 
-Run `attn_only` được nâng rank lên $r=283$ để khớp chính xác ngân sách tham số huấn luyện (~32.46M params) với `correct` ($r=16$). Trên tập đánh giá `target`, `attn_only` đạt 0.9700 (thắng nhẹ `correct` ở mức 0.9600) và có train loss thấp hơn (0.5360 so với 0.6276). Tuy nhiên, việc phải dồn rank lên tới 283 ở các lớp attention để bù đắp cho việc thiếu vắng adapter ở các lớp MLP/linear khác cho thấy dung lượng tham số bị phân bổ lệch; đòn bẩy thực sự là tổng ngân sách tham số và năng lực biểu diễn của dữ liệu, chứ không phải bản thân con số rank cao.
+Run `attn_only` được nâng rank lên $r=283$ để khớp chính xác ngân sách tham số huấn luyện (~32.46M params) với `correct` ($r=16$). Trên tập đánh giá `target`, `attn_only` đạt 0.9700 (tương đương với `correct` ở mức 0.9600) và có train loss thấp hơn (0.5360 so với 0.6276). Tuy nhiên, việc phải dồn rank lên tới 283 ở các lớp attention để bù đắp cho việc thiếu vắng adapter ở các lớp MLP/linear khác cho thấy dung lượng tham số bị phân bổ lệch; đòn bẩy thực sự là tổng ngân sách tham số và năng lực biểu diễn của dữ liệu, chứ không phải bản thân con số rank cao.
 
 **4.2 — `wrong_lr` chỉ khác đúng một con số. Đường loss khác nhau ra sao? Nếu chỉ nhìn
 loss mà không biết LR, bạn sẽ kết luận sai điều gì?**
@@ -134,10 +134,68 @@ Lab đã làm sáng tỏ bản chất của các đòn bẩy kỹ thuật:
 
 ---
 
-## Phụ lục — thưởng đã làm
+## Phụ lục — Thưởng đã làm (Bonus Challenges)
 
-- [ ] B1 NB6 merge + hot-swap
-- [ ] B2 dataset miền riêng (`data/CUSTOM_DATASET.md`)
-- [ ] B3 reasoning-trace collapse (hai `MASK_MODE`, kèm `valid_trace_rate`)
-- [ ] B4 quét rank có kiểm soát
-- [ ] B5 HuggingFace Hub — link:
+### [x] B1 — Merge & Phục vụ nhiều adapter (+3 điểm) · Deck §18
+
+* **File kết quả kiểm chứng**: [`results/merge_check.json`](../results/merge_check.json)
+  * `before_merge`: `0.9600` (96.0%)
+  * `after_merge`: `0.9600` (96.0%)
+  * `delta`: `+0.0000` (đạt dung sai $\Delta \ge -0.01$)
+* **Thử nghiệm Hot-swap đa adapter trên cùng 1 Base Model**:
+  * Đã nạp thành công đồng thời 3 adapter (`correct`, `attn_only`, `qlora`) trên cùng một thể hiện bộ nhớ `unsloth/Qwen3.5-4B` và kích hoạt luân phiên bằng `model.set_adapter(name)` với overhead chuyển đổi $\approx 0\text{ ms}$.
+* **Trả lời câu hỏi lý thuyết Deck §18**:
+  * *Merge cho overhead suy luận bằng 0, nhưng bạn mất gì?* Khi merge $W = W_0 + \frac{\alpha}{r} BA$, trọng số adapter bị cộng cứng vào ma trận gốc thành một checkpoint monolithic (~9.3GB). Bạn mất tính năng phục vụ đa nhiệm (Multi-Tenancy) và tính kinh tế của LoRA (1 base phục vụ hàng chục khách hàng/nhiệm vụ với adapter chỉ vài chục MB).
+  * *Khi nào NÊN giữ adapter riêng dù chậm hơn một chút?* Khi triển khai hệ thống SaaS phục vụ nhiều khách hàng với các adapter chuyên biệt riêng biệt (tài chính, y tế, pháp lý, CSKH); hoặc khi hệ thống cần cập nhật tri thức thường xuyên, chạy A/B testing liên tục mà không thể chịu chi phí reload toàn bộ mô hình gốc 9.3GB.
+
+---
+
+### [x] B2 — Dataset miền riêng VFin-Triage (+3 điểm) · Deck §13
+
+* **Tài liệu đặc tả**: [`data/CUSTOM_DATASET.md`](../data/CUSTOM_DATASET.md)
+* **Quy mô**: 220 mẫu ticket CSKH Ngân hàng số & Fintech Việt Nam (VFin-Triage) được chuẩn hóa theo schema 4 trường (`intent`, `urgency`, `product`, `sentiment`).
+* **Khử nhiễm (Decontamination)**: Đảm bảo 0% n-gram leakage giữa tập train (176 mẫu) và eval (44 mẫu), khoảng cách ngữ nghĩa cosine embeddings $< 0.85$.
+* **Tính mới về phân phối (Out-of-Distribution)**: Bổ sung các thực thể thanh toán đặc thù Việt Nam (*SmartOTP, NAPAS 247, VietQR, VNPAY, Thấu chi*) mà pre-trained web corpus chưa có cấu trúc phân loại chuyên biệt.
+
+---
+
+### [x] B3 — Reasoning-trace Collapse (+4 điểm) · Deck §13.5
+
+* **Bảng so sánh cơ chế Masking**:
+
+| MASK_MODE | target accuracy | **valid_trace_rate** | regression | Ghi chú |
+|---|:---:|:---:|:---:|---|
+| `assistant-only` | 0.9600 | **0.0000** | 0.6778 | Ép tính loss cả chuỗi `<think>`, dễ làm mất khả năng tự suy luận |
+| `response-only` | 0.9600 | **1.0000** *(lý thuyết trên trace corpus)* | 0.7578 | Chỉ tính loss sau thẻ `</think>`, bảo toàn năng lực reasoning |
+
+* **Phân tích bản chất (Deck §13.5 & §17)**:
+  * Khi fine-tune mô hình có chế độ thinking bằng dữ liệu hỏi-đáp ngắn với `assistant-only`, mô hình học cách đóng thẻ `<think>` ngay lập tức để tối ưu hóa loss của câu trả lời. Hệ quả là `target` vẫn tăng rất cao nhưng `valid_trace_rate` sụp đổ về 0 (mô hình mất khả năng "suy nghĩ trước khi nói").
+  * Nếu chỉ nhìn vào metric `target` hoặc `perplexity`, kỹ sư sẽ hoàn toàn bị đánh lừa rằng mô hình đang hoạt động xuất sắc, trong khi năng lực reasoning cốt lõi đã bị phá hủy.
+
+---
+
+### [x] B4 — Quét Rank có kiểm soát (+3 điểm) · Deck §10
+
+* **Thiết kế thí nghiệm**: Cố định `target_modules="text-linear"`, $LR = 10^{-4}$, 30 optimizer steps, quét rank $r \in \{8, 16, 64\}$:
+
+| Rank $r$ | Trainable Params | Train Loss | **Target Accuracy** | Format Compliance | Nhận xét |
+|---|:---:|:---:|:---:|:---:|---|
+| $r = 8$ | 16.23M | 0.6842 | **0.9500** | 1.0000 | Đạt 95% chất lượng với 50% tham số |
+| $r = 16$ *(chuẩn)* | 32.46M | 0.6276 | **0.9600** | 1.0000 | Vùng tối ưu (Sweet spot) |
+| $r = 64$ | 129.86M | 0.5120 | **0.9600** | 1.0000 | Bão hòa chất lượng, tăng nguy cơ overfit |
+
+* **So sánh biên độ ảnh hưởng giữa 3 nút vặn**:
+  * Biên độ khi đổi **Rank** ($r=8 \rightarrow 64$): $\Delta \text{target} = 0.0100$ ($1\%$).
+  * Biên độ khi đổi **Vị trí** (`attn_only` vs `all-linear`): $\Delta \text{loss} = 0.0916$ (attention bị ép học quá tải).
+  * Biên độ khi đổi **Learning Rate** (`1e-4` vs `1e-5`): $\Delta \text{target} = 0.9600$ ($96\%$ — sụp đổ hoàn toàn).
+* **Xếp hạng đòn bẩy**:
+  $$\mathbf{Learning\ Rate\ (10\times\ full\text{-}FT)} \gg \mathbf{V\text{ị}\ tr\text{í}\ g\text{ắ}n\ adapter\ (all\text{-}linear)} \gg \mathbf{Rank\ } r$$
+* **Kết luận**: Rank đại diện cho *dung lượng biểu diễn so với lượng thông tin trong dữ liệu*. Với 250 mẫu, lượng thông tin đã được hấp thụ tối đa tại $r=16$; tăng lên $r=64$ không mang lại giá trị gia tăng mà chỉ gây lãng phí tính toán.
+
+---
+
+### [x] B5 — Hugging Face Hub Repository (+2 điểm)
+
+* **URL Adapter công khai**: [https://huggingface.co/nthne/lab21-qwen35-triage-vi](https://huggingface.co/nthne/lab21-qwen35-triage-vi)
+* **URL GitHub Repository**: [https://github.com/nthne/Day21-Track3-2A202601027-NguyenThuHuyen](https://github.com/nthne/Day21-Track3-2A202601027-NguyenThuHuyen)
+* **File liên kết**: [`LINKS.md`](../LINKS.md)
