@@ -14,8 +14,11 @@ import sys
 
 import pytest
 
-# Keep `import labkit` working from a bare checkout, with no install step.
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
+# Keep `import labkit` and test utilities working from a bare checkout, with no install step.
+_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(_repo_root, "src"))
+sys.path.insert(0, _repo_root)
+sys.path.insert(0, os.path.dirname(__file__))
 
 
 @pytest.fixture(autouse=True)
